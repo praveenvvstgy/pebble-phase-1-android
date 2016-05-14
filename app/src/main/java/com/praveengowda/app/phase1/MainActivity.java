@@ -47,6 +47,9 @@ public class MainActivity extends AppCompatActivity {
 
     private boolean currentlyRecording = false;
 
+    private  final int recordMessage = 1;
+    private  final int stopMessage = 2;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -90,16 +93,22 @@ public class MainActivity extends AppCompatActivity {
         });
 
         // Progress Loading Dialog
-        loadingDialog = new MaterialDialog.Builder(this).title(R.string.collecting_log_header).content(R.string.collecting_log_content).build();
+        loadingDialog = new MaterialDialog.Builder(this)
+                .title(R.string.collecting_log_header)
+                .content(R.string.collecting_log_content)
+                .progress(true, 0)
+                .progressIndeterminateStyle(true)
+                .canceledOnTouchOutside(false)
+                .build();
 
         PebbleKit.registerReceivedAckHandler(getApplicationContext(), new PebbleKit.PebbleAckReceiver(APP_UUID) {
             @Override
             public void receiveAck(Context context, int transactionId) {
-                if (currentlyRecording) {
+                if (transactionId == recordMessage) {
                     Toast.makeText(getApplicationContext(), "Recording has started", Toast.LENGTH_SHORT).show();
                     recordBtn.setImageResource(R.drawable.stop);
                     recordBtn.setAlpha((float)1);
-                } else {
+                } else if (transactionId == stopMessage){
                     Toast.makeText(getApplicationContext(), "Recording has Stopped", Toast.LENGTH_SHORT).show();
                     recordBtn.setImageResource(R.drawable.record);
                     recordBtn.setAlpha((float)1);
@@ -111,12 +120,13 @@ public class MainActivity extends AppCompatActivity {
         PebbleKit.registerReceivedNackHandler(getApplicationContext(), new PebbleKit.PebbleNackReceiver(APP_UUID) {
             @Override
             public void receiveNack(Context context, int transactionId) {
-                if (currentlyRecording) {
+                if (transactionId == stopMessage) {
                     Toast.makeText(getApplicationContext(), "Failed to stop Recording, Try Again or Press Back Button on your Pebble", Toast.LENGTH_SHORT).show();
                     recordBtn.setAlpha((float)1);
-                } else {
-                    Toast.makeText(getApplicationContext(), "Failed to start Recording, Try Again", Toast.LENGTH_SHORT).show();
+                } else if (transactionId == recordMessage){
+                    Toast.makeText(getApplicationContext(), "Failed to start Recording, Try Again. Try launching the Watchapp on Pebble", Toast.LENGTH_SHORT).show();
                     recordBtn.setAlpha((float)1);
+                    currentlyRecording = false;
                 }
             }
         });
@@ -188,7 +198,7 @@ public class MainActivity extends AppCompatActivity {
         dict.addInt32(AppKeySessionStatus, 1);
         dict.addInt32(AppKeyActivityType, currentSelectedActivity);
 
-        PebbleKit.sendDataToPebble(this, APP_UUID, dict);
+        PebbleKit.sendDataToPebbleWithTransactionId(this, APP_UUID, dict, recordMessage);
     }
 
     private void stopRecording() {
@@ -197,7 +207,7 @@ public class MainActivity extends AppCompatActivity {
         final int AppKeySessionStatus = 0;
         dict.addInt32(AppKeySessionStatus, 2);
 
-        PebbleKit.sendDataToPebble(this, APP_UUID, dict);
+        PebbleKit.sendDataToPebbleWithTransactionId(this, APP_UUID, dict, stopMessage);
 
         recordBtn.setAlpha((float) 0.5);
     }
