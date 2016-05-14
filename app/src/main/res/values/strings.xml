@@ -17,4 +17,6 @@
         <item>Standing</item>
         <item>Driving</item>
     </string-array>
+    <string name="collecting_log_content">Collecting Accelerometer Data</string>
+    <string name="collecting_log_header">Collecting</string>
 </resources>

@@ -16,6 +16,7 @@ import android.widget.GridView;
 import android.widget.ImageView;
 import android.widget.Toast;
 
+import com.afollestad.materialdialogs.MaterialDialog;
 import com.getpebble.android.kit.PebbleKit;
 import com.getpebble.android.kit.util.PebbleDictionary;
 import com.opencsv.CSVWriter;
@@ -40,6 +41,7 @@ public class MainActivity extends AppCompatActivity {
     private GridView gridView;
     private GridViewAdapter gridAdapter;
     private ImageView recordBtn;
+    private MaterialDialog loadingDialog;
 
     private int currentSelectedActivity = -1;
 
@@ -48,8 +50,10 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
         setContentView(R.layout.activity_main);
 
+        // Grid View Setup
         gridView = (GridView) findViewById(R.id.grid_view);
         gridAdapter = new GridViewAdapter(this, R.layout.activity_cell_card, getData());
         gridView.setAdapter(gridAdapter);
@@ -62,6 +66,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        // Record Button Setup
         recordBtn = (ImageView) findViewById(R.id.record_btn);
         recordBtn.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -84,14 +89,43 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        dataLogReceiver = new PebbleKit.PebbleDataLogReceiver(APP_UUID) {
+        // Progress Loading Dialog
+        loadingDialog = new MaterialDialog.Builder(this).title(R.string.collecting_log_header).content(R.string.collecting_log_content).build();
+
+        PebbleKit.registerReceivedAckHandler(getApplicationContext(), new PebbleKit.PebbleAckReceiver(APP_UUID) {
             @Override
-            public void receiveData(Context context, UUID logUuid, Long timestamp, Long tag, int data) {
-                Log.i("Pebble-Phase-1", "New data for session " + tag + "!");
+            public void receiveAck(Context context, int transactionId) {
+                if (currentlyRecording) {
+                    Toast.makeText(getApplicationContext(), "Recording has started", Toast.LENGTH_SHORT).show();
+                    recordBtn.setImageResource(R.drawable.stop);
+                    recordBtn.setAlpha((float)1);
+                } else {
+                    Toast.makeText(getApplicationContext(), "Recording has Stopped", Toast.LENGTH_SHORT).show();
+                    recordBtn.setImageResource(R.drawable.record);
+                    recordBtn.setAlpha((float)1);
+                    loadingDialog.show();
+                }
             }
+        });
+
+        PebbleKit.registerReceivedNackHandler(getApplicationContext(), new PebbleKit.PebbleNackReceiver(APP_UUID) {
+            @Override
+            public void receiveNack(Context context, int transactionId) {
+                if (currentlyRecording) {
+                    Toast.makeText(getApplicationContext(), "Failed to stop Recording, Try Again or Press Back Button on your Pebble", Toast.LENGTH_SHORT).show();
+                    recordBtn.setAlpha((float)1);
+                } else {
+                    Toast.makeText(getApplicationContext(), "Failed to start Recording, Try Again", Toast.LENGTH_SHORT).show();
+                    recordBtn.setAlpha((float)1);
+                }
+            }
+        });
+
+        dataLogReceiver = new PebbleKit.PebbleDataLogReceiver(APP_UUID) {
 
             @Override
             public void receiveData(Context context, UUID logUuid, Long timestamp, Long tag, byte[] data) {
+                // Individual Data batches are collected here and written to CSV
                 Log.i("Pebble-Phase-1", "New data for session " + tag + "!");
                 
                 int x = (int)decodeBytes(new byte[]{data[0], data[1]});
@@ -105,7 +139,9 @@ public class MainActivity extends AppCompatActivity {
 
             @Override
             public void onFinishSession(Context context, UUID logUuid, Long timestamp, Long tag) {
+                // Open the CSV file and send Email once data logging session is complete
                 Log.i("Pebble-Phase-1", "Session " + tag + " finished!");
+                loadingDialog.dismiss();
                 try {
                     writer.close();
                     Intent i = new Intent();
@@ -121,32 +157,6 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         };
-
-        dataReceiver = new PebbleKit.PebbleDataReceiver(APP_UUID) {
-            @Override
-            public void receiveData(Context context, int transactionId, PebbleDictionary data) {
-                final int AppKeySessionStatus = 0;
-                final int AppKeyActivityType = 1;
-
-                Long statusValue = data.getInteger(AppKeySessionStatus);
-                if (statusValue != null) {
-                    switch (statusValue.intValue()) {
-                        case 1:
-                            Toast.makeText(getApplicationContext(), "Pebble has started recording", Toast.LENGTH_SHORT).show();
-                            break;
-                        case 2:
-                    }
-                }
-
-                Long activityType = data.getInteger(AppKeyActivityType);
-                if (activityType != null) {
-                    String activity = activities[activityType.intValue()];
-                    writer.writeNext(new String[]{"Activity is " + activity});
-                    writer.writeNext(new String[]{"x","y","z","timestamp"});
-                }
-                PebbleKit.sendAckToPebble(context, transactionId);
-            }
-        };
     }
 
     private boolean isPebbleConnected() {
@@ -155,15 +165,22 @@ public class MainActivity extends AppCompatActivity {
 
     private void startRecording() {
         try {
-            csvFile = new File(Environment.getExternalStorageDirectory(), UUID.randomUUID().toString() + ".csv");
+            csvFile = new File(Environment.getExternalStorageDirectory(), activities[currentSelectedActivity] + System.currentTimeMillis() + ".csv");
             writer = new CSVWriter(new FileWriter(csvFile));
         } catch (Exception e) {
             Log.e("Pebble-Phase-1", "Unable to create CSV Writer or use FileWriter");
+            Toast.makeText(getApplicationContext(), "Unable to write to External Storage", Toast.LENGTH_SHORT).show();
+            currentlyRecording = false;
+            return;
         }
+
+        // Write the header of CSV File
         String activity = activities[currentSelectedActivity];
         writer.writeNext(new String[]{"Activity is " + activity});
         writer.writeNext(new String[]{"x","y","z","timestamp"});
-        PebbleKit.startAppOnPebble(getApplicationContext(), APP_UUID);
+
+        recordBtn.setAlpha((float) 0.5);
+
         PebbleDictionary dict = new PebbleDictionary();
 
         final int AppKeySessionStatus = 0;
@@ -172,7 +189,6 @@ public class MainActivity extends AppCompatActivity {
         dict.addInt32(AppKeyActivityType, currentSelectedActivity);
 
         PebbleKit.sendDataToPebble(this, APP_UUID, dict);
-        Toast.makeText(this, "Sending Request to Device to Start Recording", Toast.LENGTH_SHORT).show();
     }
 
     private void stopRecording() {
@@ -182,7 +198,8 @@ public class MainActivity extends AppCompatActivity {
         dict.addInt32(AppKeySessionStatus, 2);
 
         PebbleKit.sendDataToPebble(this, APP_UUID, dict);
-        Toast.makeText(this, "Recording Stopped", Toast.LENGTH_SHORT).show();
+
+        recordBtn.setAlpha((float) 0.5);
     }
 
     private ArrayList<ImageItem> getData() {
@@ -199,9 +216,9 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        PebbleKit.startAppOnPebble(getApplicationContext(), APP_UUID);
 
         PebbleKit.registerDataLogReceiver(getApplicationContext(), dataLogReceiver);
-        PebbleKit.registerReceivedDataHandler(getApplicationContext(), dataReceiver);
     }
 
     @Override
@@ -210,7 +227,6 @@ public class MainActivity extends AppCompatActivity {
 
         try {
             unregisterReceiver(dataLogReceiver);
-            unregisterReceiver(dataReceiver);
         } catch (Exception e) {
             Log.w("Pebble-Phase-1", "Receiver did not need to be unregistered");
         }
